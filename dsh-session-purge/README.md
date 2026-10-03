@@ -310,22 +310,27 @@ dsh-session-purge/
 
 ## 已验证 / 未验证
 
-自检脚本都在 `.tools/asar/dsh/purge-harness/`，直接 `node <脚本>` 运行
-（`pkg-lib/` 是 `lib/` 的副本，供解析用；改完 `lib/` 需重新复制）。
+自检脚本在仓库的 [`verification/`](../verification) 目录，用运行器一次跑完：
 
-| 脚本 | 覆盖 |
-|---|---|
-| `host-test.mjs` | 列表、活动会话拒绝、入回收站、还原、永久删除、未知会话报错、批量删除失败隔离、项目目录回收、描述符形状、`apply()` 装配 |
-| `compat-test.mjs` | 运行版本与各 peer 区间的兼容性判定 |
-| `resolve-test.mjs` | 装上真实 `PluginPackages` 后按 Loader 的方式 import 本插件（复现「依赖没声明」那类静默失败） |
-| `integration-test.mjs` | 真实 Typert 注册表接受手写清单、codec 工厂可materialize、typert 绑定与描述符一致、工具与命令注册 |
-| `cordis-load-test.mjs` | 真实 Cordis fiber 装载、config 缺省/显式/非法三种情况、`ctx.inject(['commands'/'tools'])` 回调确实触发 |
-| `client-test.mjs` | 浏览器包装载、`$mount`、两个插槽注册、字典、菜单项对活动会话返回 `null`；并断言包里 `require` 的每个模块都在前端产物真实的平台种子表内 |
+```powershell
+node verification/run.mjs
+```
 
-- **已验证（真实运行中的应用）**：宿主端全链路。`session_purge` 工具被注册进
-  运行中的会话并成功列出 16 个已存储会话及其大小与 live/archived 标记。
-- **未验证**：浏览器侧菜单项的渲染。需要人在 GUI 里确认——宿主端已通过
-  HMR 就地挂载，页面会自动跟随模块图加载，必要时刷新页面。
+运行器会把 `lib/` 暂存进 DSH 运行时树（插件的裸导入靠 `peerDependencies`
+路由，必须在树内才能解析），因此脚本不再依赖任何固定路径。各脚本覆盖范围见
+[`verification/README.md`](../verification/README.md)。
+
+**已在真实运行的应用里验证**：
+
+- 宿主端全链路——`/purge`、`session_purge` 工具都可用；
+- 真实删除——4 个会话被移除，其中 2 个进了回收站、2 个按「同时永久抹除」直接
+  unlink；四个会话的投影缓存文档与 `workspace.json` 的归档条目都已清干净；
+- 侧栏菜单的**永久删除**与确认框可用（这也是本项目修掉三个客户端插槽 bug 之后
+  才成立的）。
+
+**未验证**：DSH 版本升级后的兼容性。`compat-test.mjs` 只判定
+`peerDependencies` 区间是否被当前运行版本满足；一旦 DSH 改了插槽、Typert
+描述符或客户端合成器的契约，需要按 `verification/` 的报错重新核对。
 
 ## 退出与回滚
 
@@ -333,3 +338,8 @@ dsh-session-purge/
 - 完全卸载：删掉 `cordis.patch.yml` 里的 insert 条目，再删除
   `profiles\<profile>\node_modules\@dsh-local\dsh-session-purge` 链接。
   插件不写任何自有状态，卸载后磁盘上不会留下残留。
+
+## 许可
+
+[MIT](../LICENSE) © 2026 HaiYu-22。
+
