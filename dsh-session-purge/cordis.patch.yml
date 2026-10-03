@@ -1,0 +1,9 @@
+# The bundle layer this plugin contributes to a DSH profile.
+#
+# One entry: the package's host half. The same row also carries the browser
+# half, because the package declares `dsh.client`, so `dsh-client-modules`
+# serves `lib/client.js` to the page and this entry's `./typert` export gives
+# `dsh-typert-loader` the Remote descriptors the page calls through.
+- insert:
+    - id: session-purge
+      name: '@dsh-local/dsh-session-purge'

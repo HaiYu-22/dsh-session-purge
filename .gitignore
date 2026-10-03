@@ -1,0 +1,13 @@
+# Extracted DSH internals used by the verification suite: machine-local and
+# large (an `asar extract` of resources/app.asar is several hundred MB).
+.tools/
+
+# Local debug beacon, configured through the profile patch's `loadBeacon`.
+plugin-load.log
+*.log
+
+# Scratch space the host suite creates and removes beside itself.
+verification/scratch/
+
+# This repository ships source only; nothing is installed here.
+node_modules/

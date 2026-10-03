@@ -1,0 +1,5 @@
+# Keep the repository's line endings stable: everything here is source, and the
+# plugin's own loader reads these files directly.
+* text=auto eol=lf
+*.png binary
+*.ico binary
