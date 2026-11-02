@@ -103,29 +103,59 @@ cmd /c mklink /J "$profileDir\node_modules\@dsh-local\dsh-session-purge" "$pkg"
 然后在 **设置 → 插件** 里把它作为普通包安装亦可（包内声明了
 `dsh.bundle.patch`），本机已用链接方式装好 desktop profile。
 
-### 两个必须遵守的装载约定（踩过的坑）
+### 三个必须遵守的装载约定（踩过的坑）
 
-**1. 插件必须声明自己的依赖。** 一个链接在 profiles 树之外（或未装进
+**1. 版本门禁优先看 `engines.dsh`，写成精确版本会在升级后静默失效。**
+DSH 装载一个插件前会用 `evaluatePluginCompatibility()` 判定兼容性，**不满足就
+直接丢弃该入口、不导入插件代码**——应用照常启动，插件不出现，没有任何可见
+报错。而 0.2.1 起这条判定的优先级变了：
+
+```js
+// dsh-app-boot 0.2.1-rc.5：先看 engines.dsh，只有它不存在时才回退到 peer 区间
+/** Evaluate plugin dsh requirements (`engines.dsh`, else dsh peers) without importing plugin code. */
+const engines = Object.hasOwn(fields, "engines") ? objectOf$1(fields.engines, "Plugin manifest engines") : {}
+if (Object.hasOwn(engines, "dsh")) { const range = engines.dsh; ... }
+```
+
+本插件最初把 `engines.dsh` 写成精确的 `"0.2.0-rc.2"`。在 0.2.0-rc.2 上没问题，
+但 DSH 升到 **0.2.1-rc.5** 之后：
+
+```
+runtime version    : 0.2.1-rc.5
+plugin engines.dsh : 0.2.0-rc.2
+VERDICT: DENIED — the entry is dropped silently
+  unmet: {"engines.dsh":"0.2.0-rc.2"}
+```
+
+`peerDependencies: "^0.2.0-rc.2"` 明明是满足的，但**根本不参与判定**。所以：
+
+```json
+"engines": { "node": ">=24", "dsh": ">=0.2.0-rc.2" }
+```
+
+**版本门禁一律写开区间**，别写精确版本、也别写只到 0.2.x 的 `^`。代价是未来
+DSH 若改了 API，插件不会因版本被拦，而是可能装载后行为不对——所以每次 DSH 升级
+后应重跑 `verification/`。
+
+**2. 插件必须声明自己的依赖。** 一个链接在 profiles 树之外（或未装进
 profile `node_modules`）的插件，DSH 只按一条规则接管它的裸导入：`app-boot` 的
 `routeLinked()` 会向上遍历导入者的 `node_modules`，只有在某一层目录的
 `package.json` 把该名字写进 **`peerDependencies`** 时才路由到安装自带的副本。
 不声明 → 落到原生 Node 解析 → `zod` / `@deepseek-ai/dsh-*` 全部
-`ERR_MODULE_NOT_FOUND`，而**入口会被静默判为 inactive**：应用照常启动，插件
-不出现，也没有任何可见报错。所以本包声明了：
+`ERR_MODULE_NOT_FOUND`，同样**静默 inactive**。所以本包声明了：
 
 ```json
 "peerDependencies": {
-  "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
-  "@deepseek-ai/dsh-typert-protocol": "^0.2.0-rc.2",
+  "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2",
+  "@deepseek-ai/dsh-typert-protocol": ">=0.2.0-rc.2",
   "zod": "^4.0.0"
 }
 ```
 
-只有 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 会参与版本比对（不满足会**直接
-拒绝该入口**）；区间用 `^0.2.0-rc.2` 这类能被当前运行版本（`0.2.0-rc.2`）满足
-的写法即可，`workspace:*` 会被解释成「当前运行版本」。
+只有 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 会参与版本比对；`workspace:*`
+会被解释成「当前运行版本」。
 
-**2. `Config` 必须接受「整行没有 config」**。Cordis 通过 Standard Schema 的
+**3. `Config` 必须接受「整行没有 config」**。Cordis 通过 Standard Schema 的
 `Config['~standard'].validate(config)` 校验配置，而**没有 config 的行传的是
 `undefined`**。zod 的 `z.object()` 会拒绝 `undefined`：
 
@@ -137,6 +167,7 @@ ValidationError: invalid config:
 schemastery 会自动兜底，zod 必须显式写 `.default({})`。另外 zod 的
 `.default({})` 只负责「接受缺省」，**不会**把内层字段默认值补上，所以字段默认
 值在 `resolveConfig()` 里显式兜底。
+
 
 ### 生效方式（Desktop 端与 CLI 端不同）
 
@@ -328,9 +359,18 @@ node verification/run.mjs
 - 侧栏菜单的**永久删除**与确认框可用（这也是本项目修掉三个客户端插槽 bug 之后
   才成立的）。
 
-**未验证**：DSH 版本升级后的兼容性。`compat-test.mjs` 只判定
-`peerDependencies` 区间是否被当前运行版本满足；一旦 DSH 改了插槽、Typert
-描述符或客户端合成器的契约，需要按 `verification/` 的报错重新核对。
+**跨版本状态**：
+
+| DSH 版本 | 结果 |
+|---|---|
+| `0.2.0-rc.2` | 全部通过；实际删除可用 |
+| `0.2.1-rc.5` | 全部八个脚本通过（`verification/run.mjs`）。客户端平台种子表在此版本新增了 `zod`、`@tanstack/react-virtual`，本插件不依赖它们 |
+
+**仍需注意**：`compat-test.mjs` 判定的是**版本门禁**（`engines.dsh` 优先），它
+不能证明 API 契约没变。DSH 每次升级后应重新解出运行时树并重跑
+`verification/run.mjs`；一旦官方改了插槽、Typert 描述符或客户端合成器的契约，
+只有这套脚本会给出具体报错。
+
 
 ## 退出与回滚
 

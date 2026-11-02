@@ -86,14 +86,26 @@ cmd /c mklink /J "$profileDir\node_modules\@dsh-local\dsh-session-purge" "$pkg"
 #          name: '@dsh-local/dsh-session-purge'
 ```
 
-**注意（最容易踩的一条）**：链接在工作区外的插件，其裸导入（`zod`、
-`@deepseek-ai/*`）只有在插件自己的 `package.json` **`peerDependencies`** 里声明过
-才会被 DSH 的路由接管；不声明会落到原生解析并**静默判定入口 inactive**——应用
-照常启动，插件不出现，也没有任何可见报错。本包已声明。
+**注意（升级后最容易踩的一条）**：DSH 装载前会先做**版本门禁**判定，不满足就
+**丢弃入口、不导入插件代码**，应用照常启动、插件消失、无任何可见报错。而
+0.2.1 起该判定**优先看 `engines.dsh`**（只有它缺失时才回退到 peer 区间），所以
+`engines.dsh` 必须写成开区间：
+
+```json
+"engines": { "node": ">=24", "dsh": ">=0.2.0-rc.2" }
+```
+
+本插件最初写了精确的 `"0.2.0-rc.2"`，DSH 升到 0.2.1-rc.5 后就被静默拒绝——
+`peerDependencies` 满足也没用，它根本不参与判定。
+
+第二条：链接在工作区外的插件，其裸导入（`zod`、`@deepseek-ai/*`）只有在自己的
+`package.json` **`peerDependencies`** 里声明过才会被 DSH 的路由接管；不声明同样
+会静默 inactive。本包两条都已满足。
 
 **生效方式**：宿主半边（`lib/index.js`）由 `dsh-hmr` 监听 profile 配置后就地
 挂载；**浏览器半边（`lib/client.js`）的内容每个宿主进程只快照一次**，改完需要
-在应用内「插件」页面把本插件**停用再启用**，或完全退出应用重开。
+在应用内「插件」页面把本插件**停用再启用**，或完全退出应用重开。改了
+`package.json` 的版本门禁字段时，也需要一次这样的重新组合（或重启）才会重新判定。
 
 ### 已验证
 

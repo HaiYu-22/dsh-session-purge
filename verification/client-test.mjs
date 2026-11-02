@@ -52,15 +52,44 @@ const source = await readFile(join(PLUGIN, 'lib', 'client.js'), 'utf8')
 
 // --- the bundle may require only specifiers the page's module table can answer
 const distDir = join(deepRoot, 'dsh-web-frontend', 'dist', 'assets')
+
+/**
+ * Extract the shell's platform seed table from the built frontend.
+ *
+ * Naming the minified function that returns it breaks on every rebuild (the
+ * minifier renames it), so the table is located by content instead: find the
+ * `"react/jsx-runtime"` entry, walk back to the opening brace of its object, and
+ * match braces forward to its close.
+ *
+ * @param text - one built asset.
+ * @returns the seed specifiers, or undefined when this asset has no seed table.
+ */
+const seedTableOf = (text) => {
+  const anchor = text.indexOf('"react/jsx-runtime":')
+  if (anchor < 0) return undefined
+  const start = text.lastIndexOf('{', anchor)
+  if (start < 0) return undefined
+  let depth = 0
+  for (let index = start; index < text.length; index++) {
+    const ch = text[index]
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const body = text.slice(start, index + 1)
+        return [...body.matchAll(/(?:["']([^"']+)["']|([A-Za-z_$][\w$]*))\s*:/g)].map(
+          (match) => match[1] ?? match[2],
+        )
+      }
+    }
+  }
+  return undefined
+}
+
 const seedWords = (() => {
   for (const file of readdirSync(distDir).filter((name) => name.endsWith('.js'))) {
-    const text = readFileSync(join(distDir, file), 'utf8')
-    const at = text.indexOf('function rM(){return{')
-    if (at < 0) continue
-    const body = text.slice(at, text.indexOf('}}', at) + 1)
-    return [...body.matchAll(/(?:["']([^"']+)["']|([A-Za-z_$][\w$]*))\s*:/g)].map(
-      (match) => match[1] ?? match[2],
-    )
+    const words = seedTableOf(readFileSync(join(distDir, file), 'utf8'))
+    if (words !== undefined && words.includes('react') && words.length > 1) return words
   }
   throw new Error('could not find the shell platform seed table in the frontend build')
 })()
