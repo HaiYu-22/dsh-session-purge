@@ -99,7 +99,7 @@ const findDir = async (id) => {
   return undefined
 }
 
-const service = new SessionPurge(ctx, { stopTimeoutMs: 1000, allowPermanent: true })
+const service = new SessionPurge(ctx, { allowPermanent: true })
 
 // --- listing -----------------------------------------------------------------
 const coldId = 'session-cold-0001'
@@ -122,13 +122,25 @@ assert.match(archivedRow.sessionDir, /session-archived-0002$/, 'list must report
 console.log('PASS list')
 
 // --- the live guard ----------------------------------------------------------
+//
+// A live Session cannot be removed, and DSH offers no API to close one (the
+// AgentHandle disposer is a capability held by the Agent's creator). The refusal
+// must therefore leave nothing behind: no deletion, no projection-cache drop, no
+// archive entry — an earlier version archived the Session first and left it
+// hidden after a failed removal.
+await makeSession(liveId, 256, cwd)
 const liveCtx = {
   ...ctx,
   get: (key) => (key === 'sessions' ? { get: (id) => (id === liveId ? { id } : undefined) } : ctx.get(key)),
 }
-const liveService = new SessionPurge(liveCtx, { stopTimeoutMs: 50, allowPermanent: true })
+const liveService = new SessionPurge(liveCtx, { allowPermanent: true })
+const writesBeforeRefusal = writes.slice()
 const liveOutcome = await liveService.removeOne(liveId, false)
 assert.equal(liveOutcome.failed.code, 'session-purge/live', 'a live session must be refused, not deleted')
+assert.notEqual(await findDir(liveId), undefined, 'a refused removal must leave the session directory in place')
+const sideEffects = writes.slice(writesBeforeRefusal.length)
+assert.deepEqual(sideEffects, [], `a refused removal must have no side effects, saw ${JSON.stringify(sideEffects)}`)
+assert.equal(archived.has(liveId), false, 'a refused removal must not archive the session')
 console.log('PASS live guard')
 
 // --- trashed removal ---------------------------------------------------------
@@ -192,8 +204,14 @@ const sessionProjects = remainingProjects.filter(
   (entry) => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== '_no-cwd',
 )
 assert.equal(sessionProjects.length, 1, 'the project directory stays while its trash operation exists')
-const leftover = await readdir(join(sessionsRoot, sessionProjects[0].name))
-assert.deepEqual(leftover, [restoredSessionId], 'only the restored session may remain under the project directory')
+const leftover = (await readdir(join(sessionsRoot, sessionProjects[0].name))).sort()
+/* Two Sessions are meant to survive everything above: the one restored from the
+ * trash, and the live one the guard refused to touch. */
+assert.deepEqual(
+  leftover,
+  [restoredSessionId, liveId].sort(),
+  'only the restored session and the refused live session may remain under the project directory',
+)
 const aboveTrash = remainingProjects.filter((entry) => entry.name !== '.purge-trash')
 assert.equal(aboveTrash.length, 1, 'only the one project directory may remain beside the trash root')
 assert.ok(aboveTrash[0].isDirectory(), 'a session project entry is a directory')
@@ -219,7 +237,7 @@ const loneCtx = {
     return ctx.get(key)
   },
 }
-const loneService = new SessionPurge(loneCtx, { stopTimeoutMs: 50, allowPermanent: true })
+const loneService = new SessionPurge(loneCtx, { allowPermanent: true })
 const loneOutcome = await loneService.removeOne(loneId, false)
 assert.equal(loneOutcome.failed, undefined, 'the lone session must be removable')
 assert.equal(

@@ -40,9 +40,6 @@ export const SERVICE_KEY = 'sessionManager'
 
 export { TRASH_DIRNAME }
 
-/** How long a stop request waits for a Session to leave the live store. */
-const DEFAULT_STOP_TIMEOUT_MS = 8_000
-
 /**
  * The plugin configuration schema. The Loader resolves a row's YAML config
  * through the Standard Schema face of this value, and it validates `undefined`
@@ -52,7 +49,6 @@ const DEFAULT_STOP_TIMEOUT_MS = 8_000
  */
 const Config = z
   .object({
-    stopTimeoutMs: z.number().int().min(1).default(DEFAULT_STOP_TIMEOUT_MS),
     allowPermanent: z.boolean().default(true),
     loadBeacon: z.string().optional(),
   })
@@ -507,44 +503,6 @@ export class SessionPurge {
   }
 
   /**
-   * Stop one live Session through the archive seam so its log stops being
-   * written, then wait for it to leave the live store.
-   *
-   * @param id - the Session to stop.
-   */
-  async stopSession(id) {
-    const registry = this.ctx.get('workspaceRegistry')
-    if (registry === undefined) {
-      throw new SessionPurgeError(
-        'session-purge/live',
-        id,
-        `session "${id}" is live; this composition has no workspace registry to stop it through`,
-      )
-    }
-    if (!this.archivedIds().includes(id)) {
-      await registry.archiveSession(id, { stopActivity: true })
-    }
-    /* Archiving stops the Session's work, but it does not necessarily close the
-     * Session: DSH keeps an entered Session live until its owner releases it, and
-     * the persistence backend keeps that Session's log writable. Removing the log
-     * under a live writer would leave the two out of step, so the removal waits
-     * and then refuses with something the operator can act on. */
-    const deadline = Date.now() + this.config.stopTimeoutMs
-    while (this.isLive(id)) {
-      if (Date.now() > deadline) {
-        throw new SessionPurgeError(
-          'session-purge/live',
-          id,
-          `session "${id}" is still open in this application, and its log stays writable while it is. ` +
-            `Its work was stopped and it is now archived. Quit and reopen DeepSeek Harness, then remove it: ` +
-            `a Session that is not opened again stays cold and is removable, and /purge delete <id> works from a fresh start.`,
-        )
-      }
-      await new Promise((done) => setTimeout(done, 100))
-    }
-  }
-
-  /**
    * Move one session-owned directory into this plugin's trash.
    *
    * @param locator - the session's storage locator.
@@ -671,11 +629,17 @@ export class SessionPurge {
     const sizeBytes = await this.storedSize(id)
     const live = this.isLive(id)
     if (live) {
+      /* Refused before anything is written or archived: this removal cannot
+       * happen, so it must not leave the Session stopped or archived behind it. */
       return {
         failed: {
           sessionId: id,
           code: 'session-purge/live',
-          message: `session "${id}" is live; its log would be re-created by the next write`,
+          message:
+            `session "${id}" is open in this application, and its log stays writable while it is. ` +
+            `DSH exposes no API that closes an open Session, so nothing was changed. ` +
+            `Quit DeepSeek Harness, reopen it, and remove the Session from the sidebar ` +
+            `without opening it first — a Session that is not opened again stays cold and removable.`,
         },
       }
     }
@@ -763,7 +727,11 @@ export class SessionPurge {
         continue
       }
       try {
-        if (this.isLive(id)) await this.stopSession(id)
+        /* No stop attempt here. DSH gives no API to close an open Session — its
+         * `AgentHandle` disposer is a capability held by whichever consumer
+         * created the Agent — so archiving and waiting would only add side
+         * effects (the Session gets archived) to a removal that cannot happen.
+         * `removeOne` therefore refuses a live Session immediately. */
         const outcome = await this.removeOne(id, permanent)
         if (outcome.failed !== undefined) {
           failed.push(outcome.failed)
@@ -910,10 +878,7 @@ export class SessionPurge {
  */
 function resolveConfig(value) {
   const raw = value === undefined || value === null || typeof value !== 'object' ? {} : value
-  const timeout = raw.stopTimeoutMs
   return {
-    stopTimeoutMs:
-      typeof timeout === 'number' && Number.isInteger(timeout) && timeout > 0 ? timeout : DEFAULT_STOP_TIMEOUT_MS,
     allowPermanent: raw.allowPermanent !== false,
     loadBeacon: typeof raw.loadBeacon === 'string' && raw.loadBeacon.length > 0 ? raw.loadBeacon : undefined,
   }

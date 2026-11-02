@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "@dsh-local/dsh-session-purge",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Deep delete for DeepSeek Harness sessions: remove a session's log, projection cache, and archive entry from disk instead of only hiding it",
   "type": "module",

@@ -45,20 +45,20 @@ const run = async (label, config) => {
 }
 
 const defaults = await run('no config', undefined)
-if (defaults?.stopTimeoutMs !== 8000 || defaults?.allowPermanent !== true) {
+if (defaults?.allowPermanent !== true) {
   throw new Error(`defaults were not applied: ${JSON.stringify(defaults)}`)
 }
 console.log('PASS defaults applied')
 
-const explicit = await run('explicit config', { stopTimeoutMs: 1234, allowPermanent: false })
-if (explicit?.stopTimeoutMs !== 1234 || explicit?.allowPermanent !== false) {
+const explicit = await run('explicit config', { allowPermanent: false })
+if (explicit?.allowPermanent !== false) {
   throw new Error(`explicit config was not preserved: ${JSON.stringify(explicit)}`)
 }
 console.log('PASS explicit config preserved')
 
 let rejected = false
 try {
-  await run('invalid config', { stopTimeoutMs: -5 })
+  await run('invalid config', { allowPermanent: 'yes' })
 } catch {
   rejected = true
 }

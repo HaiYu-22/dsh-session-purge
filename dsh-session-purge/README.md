@@ -205,7 +205,6 @@ Desktop 有「关闭到后台」行为，关窗口不等于退出：要用托盘
 
 | 字段 | 默认 | 含义 |
 |---|---:|---|
-| `stopTimeoutMs` | `15000` | 请求停止会话后，等待它离开活动表的上限；超时报错而不删文件 |
 | `allowPermanent` | `true` | 是否允许 `permanent`（不可恢复）删除 |
 | `loadBeacon` | 无 | 调试用：填入文件路径后，宿主端每次加载成功会往里追加一行（含时间与 pid）。DSH Desktop 不留可读日志，这是确认「宿主端到底有没有加载」的最直接手段 |
 
@@ -216,10 +215,13 @@ Desktop 有「关闭到后台」行为，关窗口不等于退出：要用托盘
     - id: session-purge
       name: '@dsh-local/dsh-session-purge'
       config:
-        stopTimeoutMs: 20000
         allowPermanent: false
         loadBeacon: 'D:\path\to\plugin-load.log'
 ```
+
+> `0.2.0` 移除了 `stopTimeoutMs`：等一个已打开的会话自动关闭是徒劳的（见下文
+> 「活动会话的删除策略」），那条等待只会带来副作用与延迟。旧配置里留着它不会报错，
+> 但已无作用。
 
 ## 客户端插槽的一个坑（本插件踩过）
 
@@ -306,14 +308,33 @@ async function apply(ctx) {
 
 ## 活动会话的删除策略
 
-删除一个**仍在本应用中打开**的会话时，插件会先用归档接缝的 `stopActivity`
-停掉它的工作，然后等待它离开活动会话表（默认最多 `stopTimeoutMs` = 8 秒）。
-但 DSH 不会因为归档就关闭一个已经进入的会话——持久化后端仍持有它的写句柄，
-此时删文件会让内存状态与磁盘不一致。所以等待超时后会**明确拒绝**并给出可执行
-的下一步（退出应用重开后再删；没被重新打开的会话保持冷状态、可直接删除）。
+一个**仍在本应用中打开**的会话**不能删**，而且这不是本插件的限制，是 DSH 的
+设计：`dsh-agent` 的文档写得很直接——
 
-实践中只有极少数会话是活动的：本机 15 个会话里只有 2 个。批量清理冷会话用
-`/purge delete-archived`。
+> Teardown stops and drains the loop, unwinds the scope, detaches the agent, then
+> detaches the session. The `AgentHandle` disposer is a **capability**: among
+> consumers, **only its holder can tear the agent down**. `ctx.agents.get(id)`
+> still returns a bare `Agent` — the handle is exposed only to the consumer that
+> created it.
+
+也没有别的出口：客户端「释放」会话只影响本地数据，*"References keep local
+Session data, scoped Contexts, and history streams alive, **not Host Agents**."*；
+归档接缝的 `session-stop` 只取消当前回合，不关闭会话。所以已打开的会话，其日志
+在进程生命周期内始终可写。
+
+**因此本插件的做法是：立刻拒绝，且不改动任何东西。**
+
+- 不尝试 `stopActivity`、不归档、不等待。早先的版本会先归档再等 8 秒，然后
+  失败——结果是把用户的会话**归档掉了却什么也没删**，看起来像被改坏。这正是
+  `0.2.0` 修掉的：被拒绝的删除**零副作用**（自检里有断言：目录仍在、投影缓存
+  未动、归档集合未变）。
+- 拒绝信息直接说明怎么办：**退出应用重开，然后不要打开它**，直接在侧栏用 `⋯`
+  删除——没被重新打开的会话保持冷状态，可删。
+
+如果你的会话已经被早先版本的失败尝试归档了，在侧栏视图选项里选「全部对话
+（显示已归档）」，对那一行用「取消归档」恢复即可。
+
+批量清理冷会话仍然用 `/purge delete-archived`（它自然跳过活动会话）。
 
 ## 宿主端的一个坑：`fs.rm` 删目录必须带 `recursive`
 

@@ -484,25 +484,22 @@ window.__ModuleLoader__.load({
 			}
 
 			const ui = ctx.inject(['remote.sessionManager'], (scope) => {
-				/** Remove one Session and resynchronize the client's session and workspace rows. */
+				/**
+				 * Remove one Session and resynchronize the client's session and workspace
+				 * rows.
+				 *
+				 * A failure is thrown, never announced: the confirmation dialog is still
+				 * open on this path and shows the Host's reason inline, so a toast beside
+				 * it would only repeat the same sentence in a second place. The toast is
+				 * for outcomes the dialog can no longer report — a completed removal — and
+				 * for activation failures raised before any dialog exists.
+				 */
 				const purgeSession = async (sessionId, permanent) => {
 					if (mountFailure !== undefined) throw new Error(`Remote sessionManager unavailable — ${mountFailure}`)
 					const result = await scope.remote.sessionManager.delete({ sessionIds: [sessionId], permanent })
-					if (!result.ok) {
-						notice.report({ kind: 'failed', reason: result.error.message })
-						throw new Error(result.error.message)
-					}
+					if (!result.ok) throw new Error(result.error.message)
 					const { deleted, failed } = result.value
-					if (failed.length > 0) {
-						notice.report({
-							kind: deleted.length > 0 ? 'partial' : 'failed',
-							count: deleted.length,
-							failed: failed.length,
-							reason: failed.map((entry) => `${entry.sessionId}: ${entry.message}`).join('; '),
-							permanent,
-						})
-						throw new Error(failed[0].message)
-					}
+					if (failed.length > 0) throw new Error(failed[0].message)
 					notice.report({ kind: 'done', count: deleted.length, permanent })
 					try {
 						await ctx.sessions.refresh()
